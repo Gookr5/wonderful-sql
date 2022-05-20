@@ -189,6 +189,174 @@ ROLLUP 可以对多列进行汇总求小计和合计。
 
 # ![图片](./img/ch05/ch0510.png)
 
+# 5.5 存储过程和函数
+
+## 5.5.1 基本介绍
+
+基本语法：
+```sql
+[delimiter //]($$，可以是其他特殊字符）
+CREATE
+    [DEFINER = user]
+    PROCEDURE sp_name ([proc_parameter[,...]])
+    [characteristic ...] 
+[BEGIN]
+  routine_body
+[END//]($$，可以是其他特殊字符）
+```
+这些语句被用来创建一个存储例程（一个存储过程或函数）。也就是说，指定的例程被服务器知道了。默认情况下，一个存储例程与默认数据库相关联。要将该例程明确地与一个给定的数据库相关联，需要在创建该例程时将其名称指定为 `db_name.sp_name`。
+
+使用 `CALL` 语句调用一个存储过程。而要调用一个存储的函数时，则要在表达式中引用它。在表达式计算期间，该函数返回一个值。
+
+`routine_body` 由一个有效的SQL例程语句组成。它可以是一个简单的语句，如 `SELECT` 或 `INSERT`，或一个使用 `BEGIN` 和 `END` 编写的复合语句。复合语句可以包含声明、循环和其他控制结构语句。在实践中，存储函数倾向于使用复合语句，除非例程主体由一个 `RETURN` 语句组成。
+
+## 5.5.2 参数介绍
+
+存储过程和函数的参数有三类，分别是：`IN`，`OUT`，`INOUT`，其中：
+- `IN` 是入参。每个参数默认都是一个 `IN` 参数。如需设定一个参数为其他类型参数，请在参数名称前使用关键字 `OUT` 或 `INOUT` 。一个IN参数将一个值传递给一个过程。存储过程可能会修改这个值，但是当存储过程返回时，调用者不会看到这个修改。
+- `OUT` 是出参。一个 `OUT` 参数将一个值从过程中传回给调用者。它的初始值在过程中是 `NULL` ，当过程返回时，调用者可以看到它的值。
+- `INOUT` ：一个 `INOUT` 参数由调用者初始化，可以被存储过程修改，当存储过程返回时，调用者可以看到存储过程的任何改变。
+
+对于每个 `OUT` 或 `INOUT` 参数，在调用过程的 `CALL` 语句中传递一个用户定义的变量，以便在过程返回时可以获得其值。如果你是在另一个存储过程或函数中调用存储过程，你也可以将一个常规参数或本地常规变量作为 `OUT` 或 `INOUT` 参数传递。如果从一个触发器中调用存储过程，也可以将 `NEW.col_name` 作为一个 `OUT` 或 `INOUT` 参数传递。
+
+## 5.5.2 应用示例
+
+- 查询
+下面的示例显示了一个简单的存储过程，给定一个国家代码，计算在 `world` 数据库的城市表中出现的该国家的城市数量。使用 `IN` 参数传递国家代码，使用 `OUT` 参数返回城市计数:
+```sql
+mysql> DELIMITER //
+mysql> DROP PROCEDURE IF EXISTS citycount //
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> CREATE PROCEDURE citycount (IN country CHAR(3), OUT cities INT)
+       BEGIN
+         SELECT COUNT(*) INTO cities FROM world.city
+         WHERE CountryCode = country;
+       END//
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> DELIMITER ;
+mysql> CALL citycount('CHN', @cities); -- cities in China
+Query OK, 1 row affected (0.01 sec)
+
+    -> SELECT @cities;
++---------+
+| @cities |
++---------+
+|     363 |
++---------+
+1 row in set (0.04 sec)
+```
+
+- 创建表
+```SQL
+mysql> use world;
+Database changed
+mysql> DELIMITER $$
+mysql> CREATE DEFINER=`root`@`localhost` PROCEDURE `product_test`()
+BEGIN
+    #Routine body goes here...
+    CREATE TABLE product_test like shop.product;
+END$$
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> DELIMITER;
+mysql> call `product_test`();
+Query OK, 0 rows affected (0.04 sec)
+
+mysql> show tables;
++-----------------+
+| Tables_in_world |
++-----------------+
+| city            |
+| country         |
+| countrylanguage |
+| product_test    |
++-----------------+
+4 rows in set (0.02 sec)
+```
+- 插入数据
+```SQL
+CREATE DEFINER=`root`@`localhost` PROCEDURE `insert_product_test`()
+BEGIN
+    declare i int;
+    set i=1;
+    while i<9 do
+        set @pcid = CONCAT('000', i);
+        PREPARE stmt FROM 'INSERT INTO product_test() SELECT * FROM shop.product where product_id= ?';
+        EXECUTE stmt USING @pcid;
+        set i=i+1;
+    end while;
+END
+```
+
+# 5.6 预处理声明 PREPARE Statement
+
+MySQL 从4.1版本开始引入了 `PREPARE Statement` 特性，使用 `client/server binary protocol` 代替 `textual protocol`，其将包含占位符 （） 的查询传递给 MySQL 服务器，如以下示例所示：
+```sql
+SELECT * 
+FROM products 
+WHERE productCode = ?;
+```
+当MySQL使用不同的 `productCode` 值执行此查询时，它不必完全解析查询。因此，这有助于MySQL更快地执行查询，特别是当MySQL多次执行相同的查询时。productcode
+
+由于预准备语句使用占位符 （），这有助于避免 SQL 注入的许多变体，从而使应用程序更安全。
+
+基本语法：
+```sql
+PREPARE stmt_name FROM preparable_stmt
+```
+
+## 5.6.1 使用步骤
+
+`MySQL PREPARE Statement` 使用步骤如下：
+
+1. PREPARE – 准备需要执行的语句预处理声明。
+2. EXECUTE – 执行预处理声明。
+3. DEALLOCATE PREPARE – 释放预处理声明。
+
+下图说明了预处理声明的使用过程：
+
+# ![图片](./img/ch05/ch0511MySQL-Prepared-Statement.png)
+
+## 5.6.2 使用示例
+
+这里使用 `shop` 中的 `product` 表进行演示。
+
+首先，定义预处理声明如下：
+```sql
+PREPARE stmt1 FROM 
+	'SELECT 
+   	    product_id, 
+            product_name 
+	FROM product
+        WHERE product_id = ?';
+```
+其次，声明变量 `pcid`，代表商品编号，并将其值设置为 `0005`：
+```sql
+SET @pcid = '0005'; 
+```
+第三，执行预处理声明：
+```sql
+EXECUTE stmt1 USING @pcid;
+```
+# ![图片](./img/ch05/ch0512-prepare-result1.png)
+
+第四，为变量 `pcid` 分配另外一个商品编号：
+```sql
+SET @pcid = '0008'; 
+```
+第五，使用新的商品编号执行预处理声明：
+```sql
+EXECUTE stmt1 USING @pcid;
+```
+# ![图片](./img/ch05/ch0513-prepare-result2.png)
+
+最后，释放预处理声明以释放其占用的资源：
+```sql
+DEALLOCATE PREPARE stmt1;
+```
+
 # 练习题
 
 ## **5.1**
@@ -213,6 +381,12 @@ SELECT  product_id
 ① 窗口函数不指定PARTITION BY的效果是什么？
 
 ② 为什么说窗口函数只能在SELECT子句中使用？实际上，在ORDER BY 子句使用系统并不会报错。
+
+## **5.4**
+
+使用简洁的方法创建20个与 `shop.product` 表结构相同的表，如下图所示：
+
+# ![图片](./img/ch05/ch0514-question5.4.png)
 
 
 
